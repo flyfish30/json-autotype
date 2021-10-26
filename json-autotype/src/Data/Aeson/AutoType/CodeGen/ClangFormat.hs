@@ -12,7 +12,7 @@ module Data.Aeson.AutoType.CodeGen.ClangFormat(
   , normalizeTypeName
 ) where
 
-import           Control.Arrow             ((&&&))
+import           Control.Arrow             ((&&&), first)
 import           Control.Applicative       ((<$>), (<*>))
 import           Control.Lens.TH
 import           Control.Lens
@@ -20,11 +20,12 @@ import           Control.Monad             (forM)
 import           Control.Exception(assert)
 import qualified Data.HashMap.Strict        as Map
 import           Data.Monoid
+import           Data.Maybe                (fromJust)
 import qualified Data.Set                   as Set
 import qualified Data.Text                  as Text
 import           Data.Text                 (Text)
 import           Data.Set                  (Set )
-import           Data.List                 (foldl1')
+import           Data.List                 (foldl1', foldl')
 import           Data.Char                 (isAlpha, isDigit)
 import           Control.Monad.State.Class
 import           Control.Monad.State.Strict(State, runState)
@@ -37,8 +38,8 @@ import           Data.Aeson.AutoType.Format
 import           Data.Aeson.AutoType.Split (toposort)
 import           Data.Aeson.AutoType.Util  ()
 
---import           Debug.Trace -- DEBUG
-trace _ x = x
+import           Debug.Trace -- DEBUG
+-- trace _ x = x
 
 shiftWidth = 4
 
@@ -171,57 +172,6 @@ genFreeReqFunction identifier contents =
     hasAllocValue (_jsonId, _clangId, typeText, _nullable) = jtypeHasAllocBuf typeText
     freeValue (jsonId, _clangId, _typeText, _nullable) =
             Text.concat ["free(req->", jsonId, ");"]
-
--- * Generate function for encode json value
-declEncodeFunction :: Text -> [MappedKey] -> Text
-declEncodeFunction identifier contents =
-    Text.concat ["int neu_parse_encode_", identifier,
-                 "(void *json_object, void *param);"]
-
-genEncodeFunction :: Text -> [MappedKey] -> Text
-genEncodeFunction identifier contents =
-    Text.unlines [
-        Text.concat ["int neu_parse_encode_", identifier,
-                     "(void *json_object, void *param)"]
-      , "{"
-      , Text.concat ["    ", res_type_decl, " *res = (", res_type_decl, ") param;\n"]
-      , genEncodeElems shiftWidth identifier contents  -- generate neu_json_elem_t elems[]
-      , "    return neu_json_encode_field(json_object, elems, NEU_JSON_ELEM_SIZE(elems));"
-      , "}"
-      ]
-  where
-    res_type_decl = Text.concat ["nue_parse_", identifier, "_res_t"]
-
-
--- * Generate function for decode json value
-declDecodeFunction :: Text -> [MappedKey] -> Text
-declDecodeFunction identifier contents =
-    Text.concat ["int neu_parse_decode_", identifier,
-                 "(char *buf, ", req_type_decl, " **result);"]
-  where
-    req_type_decl = Text.concat ["nue_parse_", identifier, "_req_t"]
-
-genDecodeFunction :: Text -> [MappedKey] -> Text
-genDecodeFunction identifier contents =
-    Text.unlines [
-        Text.concat ["int neu_parse_decode_", identifier,
-                     "(char *buf, ", req_type_decl, " **result)"]
-      , "{"
-      , Text.concat ["    ", req_type_decl, " *req = calloc(1, sizeof(", req_type_decl, "));\n"]
-      , genDecodeElems shiftWidth identifier contents  -- generate neu_json_elem_t elems[]
-      , "    int ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE(elems), elems);"
-      , "    if (ret != 0) {"
-      , "        free(req);"
-      , "        return -1;"
-      , "    }"
-      , ""
-      , genDecodeAssign shiftWidth identifier contents
-      , "    *result = req;"
-      , "    return 0;"
-      , "}"
-      ]
-  where
-    req_type_decl = Text.concat ["nue_parse_", identifier, "_req_t"]
 
 -- * Printing a single data type declaration
 newDecl :: Text -> [(Text, Type)] -> DeclM Text
@@ -384,6 +334,66 @@ splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
     initialState    = Map.empty
     (_, finalState) = runState (splitTypeByLabel' topLabel t >>= finalize) initialState
 
+-- * Generate function for encode json value
+declEncodeFunction :: Text -> [MappedKey] -> Text
+declEncodeFunction identifier contents =
+    Text.concat ["int neu_parse_encode_", identifier,
+                 "(void *json_object, void *param);"]
+
+genEncodeFunction :: Text -> [MappedKey] -> Text
+genEncodeFunction identifier contents =
+    Text.unlines [
+        Text.concat ["int neu_parse_encode_", identifier,
+                     "(void *json_object, void *param)"]
+      , "{"
+      , Text.concat ["    ", res_type_decl, " *res = (", res_type_decl, ") param;\n"]
+      , genEncodeElems shiftWidth identifier contents  -- generate neu_json_elem_t elems[]
+      , "    return neu_json_encode_field(json_object, elems, NEU_JSON_ELEM_SIZE(elems));"
+      , "}"
+      ]
+  where
+    res_type_decl = Text.concat ["nue_parse_", identifier, "_res_t"]
+
+
+-- * Generate function for decode json value
+declDecodeFunction :: Text -> [MappedKey] -> Text
+declDecodeFunction identifier contents =
+    Text.concat ["int neu_parse_decode_", identifier,
+                 "(char *buf, ", req_type_decl, " **result);"]
+  where
+    req_type_decl = Text.concat ["nue_parse_", identifier, "_req_t"]
+
+genDecodeFunction :: Text -> [MappedKey] -> Text
+genDecodeFunction identifier contents =
+    Text.unlines [
+        Text.concat ["int neu_parse_decode_", identifier,
+                     "(char *buf, ", req_type_decl, " **result)"]
+      , "{"
+      , Text.concat ["    ", req_type_decl, " *req = calloc(1, sizeof(", req_type_decl, "));\n"]
+      , genDecodeElems shiftWidth identifier contents  -- generate neu_json_elem_t elems[]
+      , "    int ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE(elems), elems);"
+      , "    if (ret != 0) {"
+      , "        free(req);"
+      , "        return -1;"
+      , "    }"
+      , ""
+      , genDecodeAssign shiftWidth identifier contents
+      , "    *result = req;"
+      , "    return 0;"
+      , "}"
+      ]
+  where
+    req_type_decl = Text.concat ["nue_parse_", identifier, "_req_t"]
+
+splitWithNames :: [Text] -> [(Text, Type)] -> [[(Text, Type)]]
+splitWithNames names kvs = tail . reverse . uncurry (flip (:))
+                         $ foldl' (\(rss, kvs') name -> first (:rss) (break ((== name) . fst) kvs'))
+                                  ([], kvs) names
+
+getObjectDict :: Type -> Dict
+getObjectDict (TObj o) = fromJust $ Just o
+getObjectDict _        = fromJust Nothing
+
 formatObjectType ::  Text -> Type -> DeclM Text
 formatObjectType identifier (TObj o) = newDecl  identifier d
   where
@@ -395,8 +405,11 @@ displaySplitTypes ::  Map Text Type -> Text
 displaySplitTypes dict = trace ("displaySplitTypes: " ++ show (toposort dict)) $ runDecl declarations
   where
     declarations =
-      forM (toposort dict) $ \(name, typ) ->
+      forM (tail $ toposort dict) $ \(name, typ) ->
         formatObjectType (normalizeTypeName name) typ
+    kvsNamePairs = zip topFieldNames $ splitWithNames topFieldNames $ tail sortedDict
+    topFieldNames = map fst . Map.toList . unDict . getObjectDict . snd $ head sortedDict
+    sortedDict = toposort dict
 
 formatObjectStruct ::  Text -> Type -> DeclM Text
 formatObjectStruct identifier (TObj o) = newStructDecl  identifier d
@@ -406,11 +419,15 @@ formatObjectStruct identifier  other   = newStructAlias identifier other
 
 -- | Declare an structure of types split by name.
 declSplitTypes ::  Map Text Type -> Text
-declSplitTypes dict = trace ("declSplitTypes: " ++ show (toposort dict)) $ runDecl declarations
+declSplitTypes dict = trace ("declSplitTypes: " ++ show sortedDict) $ runDecl declarations
   where
-    declarations =
-      forM (toposort dict) $ \(name, typ) ->
-        formatObjectStruct (normalizeTypeName name) typ
+    declarations = 
+      forM kvsNamePairs $ \(topField, kvs) -> do
+        forM kvs $ \(name, typ) ->
+          formatObjectStruct (normalizeTypeName name) typ
+    kvsNamePairs = zip topFieldNames $ splitWithNames topFieldNames $ tail sortedDict
+    topFieldNames = map fst . Map.toList . unDict . getObjectDict . snd $ head sortedDict
+    sortedDict = toposort dict
 
 -- | Normalize type name by:
 -- 1. Treating all characters that are not acceptable in Haskell variable name as end of word.

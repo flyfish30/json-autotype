@@ -121,12 +121,12 @@ writeClangModule outputFilename toplevelName types = do
     withFileOrHandle outputFilename WriteMode stdout $ \hOut ->
       assert (extension == ".c") $ do
         Text.hPutStrLn hOut $ cfileHeader $ Text.pack moduleName
-        -- We write types as Clang type declarations to output handle
+        -- We write functions as Clang type declarations to output handle
         Text.hPutStrLn hOut $ displaySplitTypes types
         Text.hPutStrLn hOut $ cfileEpilogue toplevelName
     withFileOrHandle headerFilename WriteMode stdout $ \hOut -> do
       Text.hPutStrLn hOut $ hfileHeader $ Text.pack moduleName
-      -- We write types as Clang type declarations to output handle
+      -- We write structs as Clang type declarations to output handle
       Text.hPutStrLn hOut $ declSplitTypes types
       Text.hPutStrLn hOut $ hfileEpilogue toplevelName
   where

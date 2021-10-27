@@ -148,8 +148,8 @@ genDecodeAssign indent _ contents =
                      Text.pack $ show i, "].v.val_", typeText, ";"]
 
 -- * Generate function for free request structure
-declFreeReqFunction :: Text -> [MappedKey] -> Text
-declFreeReqFunction identifier contents =
+declFreeReqFunction :: Text -> DeclM Text
+declFreeReqFunction identifier = return $
     Text.concat ["int neu_parse_decode_", identifier, "_free",
                  "(", req_type_decl, " *req);"]
   where
@@ -203,10 +203,7 @@ newStructDecl identifier kvs = do attrs <- forM kvs $ \(k, v) -> do
                                     formatted <- formatStruct v
                                     return (k, normalizeFieldName identifier k, formatted, isNullable v)
                                   let decl = Text.unlines [ wrapStruct identifier $ fieldDecls attrs
-                                                          , ""
-                                                          , declEncodeFunction identifier attrs
-                                                          , declDecodeFunction identifier attrs
-                                                          , declFreeReqFunction identifier attrs]
+                                                          , ""]
                                   addDecl decl
                                   return identifier
   where
@@ -335,8 +332,8 @@ splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
     (_, finalState) = runState (splitTypeByLabel' topLabel t >>= finalize) initialState
 
 -- * Generate function for encode json value
-declEncodeFunction :: Text -> [MappedKey] -> Text
-declEncodeFunction identifier contents =
+declEncodeFunction :: Text -> DeclM Text
+declEncodeFunction identifier = return $
     Text.concat ["int neu_parse_encode_", identifier,
                  "(void *json_object, void *param);"]
 
@@ -356,8 +353,8 @@ genEncodeFunction identifier contents =
 
 
 -- * Generate function for decode json value
-declDecodeFunction :: Text -> [MappedKey] -> Text
-declDecodeFunction identifier contents =
+declDecodeFunction :: Text -> DeclM Text
+declDecodeFunction identifier = return $
     Text.concat ["int neu_parse_decode_", identifier,
                  "(char *buf, ", req_type_decl, " **result);"]
   where
@@ -425,6 +422,9 @@ declSplitTypes dict = trace ("declSplitTypes: " ++ show sortedDict) $ runDecl de
       forM kvsNamePairs $ \(topField, kvs) -> do
         forM kvs $ \(name, typ) ->
           formatObjectStruct (normalizeTypeName name) typ
+        declEncodeFunction topField
+        declDecodeFunction topField
+        declFreeReqFunction topField
     kvsNamePairs = zip topFieldNames $ splitWithNames topFieldNames $ tail sortedDict
     topFieldNames = map fst . Map.toList . unDict . getObjectDict . snd $ head sortedDict
     sortedDict = toposort dict

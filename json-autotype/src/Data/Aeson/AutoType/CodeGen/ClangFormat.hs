@@ -16,7 +16,7 @@ import           Control.Arrow             ((&&&), first)
 import           Control.Applicative       ((<$>), (<*>))
 import           Control.Lens.TH
 import           Control.Lens
-import           Control.Monad             (forM)
+import           Control.Monad             (forM, forM_)
 import           Control.Exception(assert)
 import qualified Data.HashMap.Strict        as Map
 import           Data.Monoid
@@ -148,8 +148,8 @@ genDecodeAssign indent _ contents =
                      Text.pack $ show i, "].v.val_", typeText, ";"]
 
 -- * Generate function for free request structure
-declFreeReqFunction :: Text -> DeclM Text
-declFreeReqFunction identifier = return $
+declFreeReqFunction :: Text -> DeclM ()
+declFreeReqFunction identifier = addDecl $
     Text.concat ["int neu_parse_decode_", identifier, "_free",
                  "(", req_type_decl, " *req);"]
   where
@@ -254,7 +254,7 @@ formatType (TUnion u)                        = wrap <$> case length nonNull of
     wrap   inner  | TNull `Set.member` u = Text.concat ["(Maybe (", inner, "))"]
                   | otherwise            =                          inner
 formatType (TArray a)                        = do inner <- formatType a
-                                                  return $ Text.concat ["[", inner, "]"]
+                                                  return "object"
 formatType (TObj   o)                        = do ident <- genericIdentifier
                                                   newDecl ident d
   where
@@ -280,7 +280,7 @@ formatStruct (TUnion u)                        = wrap <$> case length nonNull of
     wrap   inner  | TNull `Set.member` u = Text.concat ["(Maybe (", inner, "))"]
                   | otherwise            =                          inner
 formatStruct (TArray a)                        = do inner <- formatStruct a
-                                                    return $ Text.concat ["[", inner, "]"]
+                                                    return $ Text.concat [inner, "*"]
 formatStruct (TObj   o)                        = do ident <- genericIdentifier
                                                     newStructDecl ident d
   where
@@ -314,7 +314,7 @@ splitTypeByLabel' _  TNull     = return TNull
 splitTypeByLabel' _ (TLabel r) = assert False $ return $ TLabel r -- unnecessary?
 splitTypeByLabel' l (TUnion u) = do m <- mapM (splitTypeByLabel' l) $ Set.toList u
                                     return $! TUnion $! Set.fromList m
-splitTypeByLabel' l (TArray a) = do m <- splitTypeByLabel' (l `Text.append` "Elt") a
+splitTypeByLabel' l (TArray a) = do m <- splitTypeByLabel' (l `Text.append` "_elt") a
                                     return $! TArray m
 splitTypeByLabel' l (TObj   o) = do kvs <- forM (Map.toList $ unDict o) $ \(k, v) -> do
                                        component <- splitTypeByLabel' k v
@@ -332,8 +332,8 @@ splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
     (_, finalState) = runState (splitTypeByLabel' topLabel t >>= finalize) initialState
 
 -- * Generate function for encode json value
-declEncodeFunction :: Text -> DeclM Text
-declEncodeFunction identifier = return $
+declEncodeFunction :: Text -> DeclM ()
+declEncodeFunction identifier = addDecl $
     Text.concat ["int neu_parse_encode_", identifier,
                  "(void *json_object, void *param);"]
 
@@ -353,8 +353,8 @@ genEncodeFunction identifier contents =
 
 
 -- * Generate function for decode json value
-declDecodeFunction :: Text -> DeclM Text
-declDecodeFunction identifier = return $
+declDecodeFunction :: Text -> DeclM ()
+declDecodeFunction identifier = addDecl $
     Text.concat ["int neu_parse_decode_", identifier,
                  "(char *buf, ", req_type_decl, " **result);"]
   where
@@ -405,7 +405,7 @@ displaySplitTypes dict = trace ("displaySplitTypes: " ++ show (toposort dict)) $
       forM (tail $ toposort dict) $ \(name, typ) ->
         formatObjectType (normalizeTypeName name) typ
     kvsNamePairs = zip topFieldNames $ splitWithNames topFieldNames $ tail sortedDict
-    topFieldNames = map fst . Map.toList . unDict . getObjectDict . snd $ head sortedDict
+    topFieldNames = map fst . toposort . unDict . getObjectDict . snd $ head sortedDict
     sortedDict = toposort dict
 
 formatObjectStruct ::  Text -> Type -> DeclM Text
@@ -416,17 +416,17 @@ formatObjectStruct identifier  other   = newStructAlias identifier other
 
 -- | Declare an structure of types split by name.
 declSplitTypes ::  Map Text Type -> Text
-declSplitTypes dict = trace ("declSplitTypes: " ++ show sortedDict) $ runDecl declarations
+declSplitTypes dict = trace ("declSplitTypes: " ++ show kvsNamePairs) $ runDecl declarations
   where
     declarations = 
       forM kvsNamePairs $ \(topField, kvs) -> do
-        forM kvs $ \(name, typ) ->
-          formatObjectStruct (normalizeTypeName name) typ
-        declEncodeFunction topField
-        declDecodeFunction topField
         declFreeReqFunction topField
-    kvsNamePairs = zip topFieldNames $ splitWithNames topFieldNames $ tail sortedDict
-    topFieldNames = map fst . Map.toList . unDict . getObjectDict . snd $ head sortedDict
+        declDecodeFunction topField
+        declEncodeFunction topField
+        forM_ kvs $ \(name, typ) ->
+          formatObjectStruct (normalizeTypeName name) typ
+    kvsNamePairs = zip topFieldNames . splitWithNames topFieldNames $ tail sortedDict
+    topFieldNames = map fst . toposort . unDict . getObjectDict . snd $ head sortedDict
     sortedDict = toposort dict
 
 -- | Normalize type name by:

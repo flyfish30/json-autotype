@@ -25,7 +25,7 @@ import qualified Data.Set                   as Set
 import qualified Data.Text                  as Text
 import           Data.Text                 (Text)
 import           Data.Set                  (Set )
-import           Data.List                 (foldl1', foldl')
+import           Data.List                 (foldl1', foldl', intercalate)
 import           Data.Char                 (isAlpha, isDigit)
 import           Control.Monad.State.Class
 import           Control.Monad.State.Strict(State, runState)
@@ -110,54 +110,51 @@ jtypeHasAllocBuf _ = False
 
 unlinesWithIndent n = Text.unlines . map (Text.replicate n " " `Text.append`)
 
+shiftWithIndent n = map (Text.replicate n " " `Text.append`)
+
 -- | Makes a generic identifier name.
 genericIdentifier :: DeclM Text
 genericIdentifier = do
   i <- stepM
   return $! "Obj" `Text.append` tShow i
 
-genEncodeElems :: Int -> Text -> Text -> [MappedKey] -> Text
-genEncodeElems indent identifier valName contents =
-    unlinesWithIndent indent [
+data EndecEnum = Encode
+               | Decode
+               deriving (Eq)
+
+genEndecElems :: Int -> EndecEnum -> Text -> Text -> [MappedKey] -> [Text]
+genEndecElems indent endec identifier valName contents =
+    shiftWithIndent indent $ [
         Text.concat ["neu_json_elem_t ", identifier, "[] = {"]
-      , Text.concat ["    {\n", inner "        },\n        {\n", "        }"]
+      , "    {"
+      ] ++
+      innerElems
+      ++ [
+        "    }"
       , "};"
       ]
   where
-    inner separator = separator `Text.intercalate`
-                      map putValue contents
+    innerElems = intercalate seperator $ map putValue contents
     putValue (jsonId, clangId, typeText, _nullable) =
-        unlinesWithIndent (indent + shiftWidth) [
-            Text.concat ["    .name = ", escapeText jsonId, ","]
-          , Text.concat ["    .t = NEU_JSON_", Text.toUpper typeText, ","]
-          , valAssign typeText jsonId
+        shiftWithIndent (indent + shiftWidth) $ [
+            Text.concat [".name = ", escapeText jsonId, ","]
+          , Text.concat [".t = NEU_JSON_", Text.toUpper typeText, ","]
+          ] ++ 
+          [valAssign typeText jsonId | endec == Encode]
+    seperator = 
+        shiftWithIndent indent [
+            "},"
+          , "{"
           ]
     escapeText = Text.pack . show . Text.unpack
     getArrayName fieldName = Text.append (tryStripSuffix "s" fieldName) "_array"
     valAssign typeText jsonId
-      | typeText == "object" = Text.concat ["    .v.", typeText, " = ", getArrayName jsonId, ","]
-      | otherwise            = Text.concat ["    .v.val_", typeText, " = ", valName, "->" , jsonId, ","]
+      | typeText == "object" = Text.concat [".v.", typeText, " = ", getArrayName jsonId, ","]
+      | otherwise            = Text.concat [".v.val_", typeText, " = ", valName, "->" , jsonId, ","]
 
-genDecodeElems :: Int -> Text -> [MappedKey] -> Text
-genDecodeElems indent identifier contents =
-    unlinesWithIndent indent [
-        Text.concat ["neu_json_elem_t ", identifier, "[] = {"]
-      , Text.concat ["    {\n", inner "        },\n        {\n", "        }"]
-      , "};"
-      ]
-  where
-    inner separator = separator `Text.intercalate`
-                      map putValue contents
-    putValue (jsonId, clangId, typeText, _nullable) =
-        unlinesWithIndent (indent + shiftWidth) [
-            Text.concat ["    .name = ", escapeText jsonId, ","]
-          , Text.concat ["    .t = NEU_JSON_", Text.toUpper typeText, ","]
-          ]
-    escapeText = Text.pack . show . Text.unpack
-
-genDecodeAssign :: Int -> Text -> Text -> [MappedKey] -> Text
+genDecodeAssign :: Int -> Text -> Text -> [MappedKey] -> [Text]
 genDecodeAssign indent varName elemsName contents =
-    unlinesWithIndent indent $ zipWith assignValue [0,1..] contents
+    shiftWithIndent indent $ zipWith assignValue [0,1..] contents
   where
     assignValue i (jsonId, clangId, typeText, _nullable) =
         Text.concat [varName, "->", jsonId, " = ", elemsName, "[",
@@ -169,9 +166,10 @@ newEncodeSeg identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = Text.unlines [
-                    genEncodeElems shiftWidth elems_name "" attrs  -- generate neu_json_elem_t elems[]
-                  , "    ret = neu_json_encode_field(json_object, elems, NEU_JSON_ELEM_SIZE(elems));"
+    let decl = Text.unlines $
+                  genEndecElems shiftWidth Encode elems_name "" attrs  -- generate neu_json_elem_t elems[]
+                  ++ [
+                    "    ret = neu_json_encode_field(json_object, elems, NEU_JSON_ELEM_SIZE(elems));"
                   ]
 
     addDecl decl
@@ -185,12 +183,14 @@ newEncodeArraySeg names identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = unlinesWithIndent shiftWidth [
+    let decl = unlinesWithIndent shiftWidth $ [
                     Text.concat ["void *", arrayName, " = NULL;"]
                   , Text.concat [resp_type_decl, " *", pVarName, " = ", varName, ";"]
-                  , Text.concat ["for (int i = 0; i < ", countName, " ; i++) {"]
-                  , genEncodeElems shiftWidth elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
-                  , Text.concat [ "    ", arrayName, " = neu_json_encode_array(", arrayName, ", "
+                  , Text.concat ["for (int i = 0; i < ", countName, "; i++) {"]
+                  ] ++
+                  genEndecElems shiftWidth Encode elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
+                  ++ [
+                    Text.concat [ "    ", arrayName, " = neu_json_encode_array(", arrayName, ", "
                                 , elems_name, ", NEU_JSON_ELEM_SIZE(", elems_name, "));"]
                   , Text.concat ["    ", pVarName, "++;"]
                   , "}"
@@ -217,18 +217,19 @@ newDecodeSeg identifier kvs = do
     attrs <- forM kvs' $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = Text.unlines [
+    let decl = Text.unlines $ [
                     Text.concat ["    ", req_type_decl, " *req = calloc(1, sizeof(", req_type_decl, "));\n"]
-                  , genDecodeElems shiftWidth elems_name attrs  -- generate neu_json_elem_t elems[]
-                  , Text.concat [ "    ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE("
+                  ] ++
+                  genEndecElems shiftWidth Decode elems_name "" attrs  -- generate neu_json_elem_t elems[]
+                  ++ [
+                    Text.concat [ "    ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE("
                                 , elems_name, "), ", elems_name, ");"]
                   , "    if (ret != 0) {"
-                  , "        ret = -1;"
-                  , "        goto decode_exit;"
+                  , "        goto decode_fail;"
                   , "    }"
                   , ""
-                  , genDecodeAssign shiftWidth "req" elems_name attrs
                   ]
+                  ++ genDecodeAssign shiftWidth "req" elems_name attrs
 
     addDecl decl
     return "req"
@@ -241,21 +242,24 @@ newDecodeArraySeg names identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = unlinesWithIndent shiftWidth [
+    let decl = unlinesWithIndent shiftWidth $ [
                     Text.concat [countName, " = neu_json_decode_array_size(buf, \"", fieldName, "\");"]
                   , Text.concat [varName, " = calloc(", countName, ", sizeof(", req_type_decl, "));"]
                   , Text.concat [req_type_decl, " *", pVarName, " = ", varName, ";"]
-                  , Text.concat ["for (int i = 0; i < ", countName, " ; i++) {"]
-                  , genDecodeElems shiftWidth elems_name attrs  -- generate neu_json_elem_t elems[]
-                  , Text.concat [ "    ret = neu_json_decode_array(buf, \"", fieldName
+                  , Text.concat ["for (int i = 0; i < ", countName, "; i++) {"]
+                  ] ++
+                  genEndecElems shiftWidth Decode elems_name "" attrs  -- generate neu_json_elem_t elems[]
+                  ++ [
+                    Text.concat [ "    ret = neu_json_decode_array(buf, \"", fieldName
                                 , "\", i, NEU_JSON_ELEM_SIZE(", elems_name, "), ", elems_name, ");"]
                   , "    if (ret != 0) {"
-                  , "        ret = -1;"
-                  , "        goto decode_exit;"
+                  , "        goto decode_fail;"
                   , "    }"
                   , ""
-                  , genDecodeAssign (shiftWidth*2) pVarName elems_name attrs
-                  , Text.concat ["    ", pVarName, "++;"]
+                  ] ++
+                  genDecodeAssign shiftWidth pVarName elems_name attrs
+                  ++ [
+                    Text.concat ["    ", pVarName, "++;"]
                   , "}"
                   ]
 
@@ -293,11 +297,13 @@ newFreeReqArraySeg names identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = unlinesWithIndent shiftWidth [
+    let decl = unlinesWithIndent shiftWidth $ [
                     Text.concat [req_type_decl, " *", pVarName, " = ", varName, ";"]
-                  , Text.concat ["for (int i = 0; i < ", countName, " ; i++) {"]
-                  , innerFree attrs
-                  , Text.concat ["    ", pVarName, "++;"]
+                  , Text.concat ["for (int i = 0; i < ", countName, "; i++) {"]
+                  ] ++
+                  innerFree attrs
+                  ++ [
+                    Text.concat ["    ", pVarName, "++;"]
                   , "}"
                  ]
     addDecl decl
@@ -306,40 +312,37 @@ newFreeReqArraySeg names identifier kvs = do
     varName = Text.intercalate "->" (init names ++ [Text.concat [last names, "s"]])
     countName = Text.intercalate "->" (init names ++ [Text.concat ["n_", last names]])
     pVarName = Text.concat ["p_", last names]
-    innerFree = unlinesWithIndent shiftWidth . map freeValue
+    innerFree = shiftWithIndent shiftWidth . map freeValue
               . filter hasAllocValue
     hasAllocValue (_jsonId, _clangId, typeText, _nullable) = jtypeHasAllocBuf typeText
     freeValue (jsonId, _clangId, _typeText, _nullable) =
             Text.concat ["free(", pVarName, "->", jsonId, ");"]
-
--- | Add new type alias for Array type
-newAlias :: Text -> Type -> DeclM Text
-newAlias identifier content = do formatted <- formatType content
-                                 addDecl $ Text.unlines [wrapAlias identifier formatted]
-                                 return identifier
 
 -- * Printing a single data type declaration
 newStructDecl :: Text -> [(Text, Type)] -> DeclM Text
 newStructDecl identifier kvs = do attrs <- forM kvs $ \(k, v) -> do
                                     formatted <- formatStruct v
                                     return (k, normalizeFieldName identifier k, formatted, isNullable v)
-                                  let decl = Text.unlines [ wrapStruct identifier $ fieldDecls attrs
-                                                          , ""]
+                                  let decl = wrapStruct identifier $ fieldDecls attrs
                                   addDecl decl
                                   return identifier
   where
     fieldDecls attrList = Text.intercalate "\n" $ map fieldDecl attrList
     fieldDecl :: (Text, Text, Text, Bool) -> Text
     fieldDecl (_jsonName, haskellName, fType, _nullable) =
-        Text.concat ["    ", fieldTypeName fType, "  ", escapeKeywords haskellName, ";"]
-    fieldTypeName name@(Text.isSuffixOf "sElt*" -> True) = Text.append "neu_parse_"
-                                                         . flip Text.append "_t*"
-                                                         . mergeSubTypeName identifier
-                                                         . escapeKeywords $ Text.dropEnd 1 name
-    fieldTypeName name = escapeKeywords name
-    fieldValName name@(Text.isSuffixOf "s" -> True) = sanitySubEltName
-                                                    . escapeKeywords $ Text.dropEnd 1 name
-    fieldValName name = escapeKeywords name
+      if Text.isSuffixOf "sElt*" fType then
+          Text.unlines [
+              Text.concat ["    int  ", arrayLenName haskellName, ";"]
+            , Text.concat ["    ", arrayTypeName fType, "  ", escapeKeywords haskellName, ";"]
+          ]
+      else
+          Text.concat ["    ", fType, "  ", escapeKeywords haskellName, ";"]
+    arrayLenName name = Text.append "n_"
+                      . escapeKeywords $ tryStripSuffix "s" name
+    arrayTypeName name = Text.append "neu_parse_"
+                       . flip Text.append "_t*"
+                       . mergeSubTypeName identifier
+                       . escapeKeywords $ Text.dropEnd 1 name
 
 -- | Add new type alias for Array type
 newStructAlias :: Text -> Type -> DeclM Text
@@ -515,8 +518,8 @@ declDecodeFunction identifier = addDecl $
 decodeFunctionHeader :: Text -> Text
 decodeFunctionHeader identifier = 
     Text.unlines [
-        Text.concat ["int neu_parse_decode_", identifier,
-                     "(char *buf, ", req_type_decl, " **result)"]
+        Text.concat [ "int neu_parse_decode_", identifier
+                    , "(char *buf, ", req_type_decl, " **result)"]
       , "{"
       , "    int ret = 0;"
       ]
@@ -526,19 +529,16 @@ decodeFunctionHeader identifier =
 decodeFunctionEpilogue :: [Text] -> Text
 decodeFunctionEpilogue varNames =
     Text.unlines [
-        "decode_exit:"
-      , "    if (ret != 0) {"
-      , freeVarNames
-      , "        ret = -1;"
-      , "    } else {"
-      , "        *result = req;"
-      , "        ret = 0;"
-      , "    }"
+        "    *result = req;"
       , "    return ret;"
+      , ""
+      , "decode_fail:"
+      , freeVarNames
+      , "    return -1;"
       , "}"
     ]
   where
-    freeVarNames = unlinesWithIndent (shiftWidth * 2)
+    freeVarNames = unlinesWithIndent shiftWidth
                  $ map (Text.append "free(" . flip Text.append ");")
                  $ reverse varNames
 
@@ -603,14 +603,6 @@ getObjectDict :: Type -> Dict
 getObjectDict (TObj o) = fromJust $ Just o
 getObjectDict _        = fromJust Nothing
 
-{-
-formatObjectType ::  Text -> Type -> DeclM Text
-formatObjectType identifier (TObj o) = newDecl  identifier d
-  where
-    d = Map.toList $ unDict o
-formatObjectType identifier  other   = newAlias identifier other
--}
-
 -- | Display an environment of types split by name.
 displaySplitTypes ::  Map Text Type -> Text
 displaySplitTypes dict = trace ("displaySplitTypes: " ++ show (toposort dict)) $ runDecl declarations
@@ -620,6 +612,7 @@ displaySplitTypes dict = trace ("displaySplitTypes: " ++ show (toposort dict)) $
         if Text.isSuffixOf "_req" name then do
           genDecodeFunction (normalizeTypeName name) kvs
           genFreeReqFunction (normalizeTypeName name) kvs
+          addDecl ""
         else
           genEncodeFunction (normalizeTypeName name) kvs
     nameKvsPairs = zip topFieldNames . splitWithNames topFieldNames $ tail sortedDict
@@ -648,6 +641,7 @@ declSplitTypes dict = trace ("declSplitTypes: " ++ show nameKvsPairs) $ runDecl 
           declFreeReqFunction topField
         else 
           declEncodeFunction topField
+        addDecl ""
     nameKvsPairs = zip topFieldNames . splitWithNames topFieldNames $ tail sortedDict
     topFieldNames = map fst . toposort . unDict . getObjectDict . snd $ head sortedDict
     sortedDict = toposort dict

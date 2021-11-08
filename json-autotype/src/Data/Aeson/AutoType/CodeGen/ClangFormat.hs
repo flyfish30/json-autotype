@@ -504,17 +504,24 @@ encodeFunctionEpilogue varNames =
 genEncodeFunction :: Text -> [(Text, Type)] -> DeclM ()
 genEncodeFunction identifier kvs = do
     addDecl $ encodeFunctionHeader identifier
-    varNames <- forM (reverse kvs) $ \(name, TObj o) ->
-        if Text.isSuffixOf "sElt" name then
-          newEncodeArraySeg ["resp", tryStripSuffix "sElt" name]
-                            (getIdentifier identifier name) (toposort $ unDict o)
-        else
-          newEncodeSeg (getIdentifier identifier name) (toposort $ unDict o)
+    varNames <- forM (reverse kvs) genEncodeVariables
     addDecl $ encodeFunctionEpilogue varNames
   where
     getIdentifier sup sub = if sup == sub
                             then sub
                             else mergeSubTypeName sup sub
+    genEncodeVariables (name, TObj o)
+      | Text.isSuffixOf "sElt" name =
+          newEncodeArraySeg ["resp", tryStripSuffix "sElt" name]
+                            (getIdentifier identifier name) (toposort $ unDict o)
+      | otherwise =
+          newEncodeSeg (getIdentifier identifier name) (toposort $ unDict o)
+    genEncodeVariables (name, typ)
+      | Text.isSuffixOf "sElt" name =
+          newEncodeArraySeg ["resp", tryStripSuffix "sElt" name]
+                            (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+      | otherwise =
+          newEncodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
 -- * Generate function for decode json value
 declDecodeFunction :: Text -> DeclM ()
@@ -559,17 +566,24 @@ decodeFunctionEpilogue varNames =
 genDecodeFunction :: Text -> [(Text, Type)] -> DeclM ()
 genDecodeFunction identifier kvs = do
     addDecl $ decodeFunctionHeader identifier
-    varNames <- forM kvs $ \(name, TObj o) ->
-        if Text.isSuffixOf "sElt" name then
-          newDecodeArraySeg ["req", tryStripSuffix "sElt" name]
-                            (getIdentifier identifier name) (toposort $ unDict o)
-        else
-          newDecodeSeg (getIdentifier identifier name) (toposort $ unDict o)
+    varNames <- forM kvs genDecodeVariables
     addDecl $ decodeFunctionEpilogue varNames
   where
     getIdentifier sup sub = if sup == sub
                             then sub
                             else mergeSubTypeName sup sub
+    genDecodeVariables (name, TObj o)
+      | Text.isSuffixOf "sElt" name =
+          newDecodeArraySeg ["req", tryStripSuffix "sElt" name]
+                            (getIdentifier identifier name) (toposort $ unDict o)
+      | otherwise =
+          newDecodeSeg (getIdentifier identifier name) (toposort $ unDict o)
+    genDecodeVariables (name, typ)
+      | Text.isSuffixOf "sElt" name =
+          newDecodeArraySeg ["req", tryStripSuffix "sElt" name]
+                            (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+      | otherwise =
+          newDecodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
 -- * Generate function for free request structure
 declFreeReqFunction :: Text -> DeclM ()
@@ -595,17 +609,24 @@ freeReqFunctionEpilogue identifier = "}"
 genFreeReqFunction :: Text -> [(Text, Type)] -> DeclM ()
 genFreeReqFunction identifier kvs = do
     addDecl $ freeReqFunctionHeader identifier
-    forM_ (reverse kvs) $ \(name, TObj o) ->
-        if Text.isSuffixOf "sElt" name then
-          newFreeReqArraySeg ["req", tryStripSuffix "sElt" name]
-                            (getIdentifier identifier name) (toposort $ unDict o)
-        else
-          newFreeReqSeg (getIdentifier identifier name) (toposort $ unDict o)
+    forM_ (reverse kvs) genFreeVariables
     addDecl $ freeReqFunctionEpilogue identifier
   where
     getIdentifier sup sub = if sup == sub
                             then sub
                             else mergeSubTypeName sup sub
+    genFreeVariables (name, TObj o)
+      | Text.isSuffixOf "sElt" name =
+          newFreeReqArraySeg ["req", tryStripSuffix "sElt" name]
+                            (getIdentifier identifier name) (toposort $ unDict o)
+      | otherwise =
+          newFreeReqSeg (getIdentifier identifier name) (toposort $ unDict o)
+    genFreeVariables (name, typ)
+      | Text.isSuffixOf "sElt" name =
+          newFreeReqArraySeg ["req", tryStripSuffix "sElt" name]
+                            (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+      | otherwise =
+          newFreeReqSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
 -- * format object and structure
 splitWithNames :: [Text] -> [(Text, Type)] -> [[(Text, Type)]]
@@ -648,7 +669,7 @@ declSplitTypes dict = trace ("declSplitTypes: " ++ show nameKvsPairs) $ runDecl 
   where
     declarations =
       forM (reverse nameKvsPairs) $ \(topField, kvs) -> do
-        forM_ kvs $ \(name, typ) ->
+        forM_ (reverse kvs) $ \(name, typ) ->
           formatObjectStruct topField (normalizeTypeName name) typ
         if Text.isSuffixOf "_req" topField then do
           declDecodeFunction topField

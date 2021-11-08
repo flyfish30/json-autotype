@@ -56,12 +56,18 @@ type TypeTreeM a = State TypeTree a
 addType :: Text -> Type -> TypeTreeM ()
 addType label typ = modify $ Map.insertWith (++) label [typ]
 
+splitPrimaryTypeByLabel :: Text -> Type -> TypeTreeM Type
+splitPrimaryTypeByLabel l typ = if Text.isSuffixOf "Elt" l then do
+                                     addType l typ
+                                     return $! TLabel l
+                                 else return typ
+
 splitTypeByLabel' :: Text -> Type -> TypeTreeM Type
-splitTypeByLabel' _  TString   = return TString
-splitTypeByLabel' _  TInt      = return TInt
-splitTypeByLabel' _  TDouble   = return TDouble
-splitTypeByLabel' _  TBool     = return TBool
-splitTypeByLabel' _  TNull     = return TNull
+splitTypeByLabel' l  TString   = splitPrimaryTypeByLabel l TString
+splitTypeByLabel' l  TInt      = splitPrimaryTypeByLabel l TInt
+splitTypeByLabel' l  TDouble   = splitPrimaryTypeByLabel l TDouble
+splitTypeByLabel' l  TBool     = splitPrimaryTypeByLabel l TBool
+splitTypeByLabel' l  TNull     = splitPrimaryTypeByLabel l TNull
 splitTypeByLabel' _ (TLabel r) = assert False $ return $ TLabel r -- unnecessary?
 splitTypeByLabel' l (TUnion u) = do m <- mapM (splitTypeByLabel' l) $ Set.toList u
                                     return $! TUnion $! Set.fromList m

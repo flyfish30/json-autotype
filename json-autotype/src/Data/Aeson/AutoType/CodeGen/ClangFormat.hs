@@ -12,7 +12,7 @@ module Data.Aeson.AutoType.CodeGen.ClangFormat(
   , normalizeTypeName
 ) where
 
-import           Control.Arrow             ((&&&), first)
+import           Control.Arrow             ((&&&), first, second)
 import           Control.Applicative       ((<$>), (<*>))
 import           Control.Lens.TH
 import           Control.Lens
@@ -188,15 +188,15 @@ newEncodeSeg identifier kvs = do
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
     let decl = Text.unlines $
                   genEndecElems shiftWidth Encode elems_name "" attrs  -- generate neu_json_elem_t elems[]
-                  ++ [
-                    "    ret = neu_json_encode_field(json_object, elems, NEU_JSON_ELEM_SIZE(elems));"
-                  ]
+                  ++ [ Text.concat [ "    ret = neu_json_encode_field(json_object, "
+                                   , elems_name, "NEU_JSON_ELEM_SIZE(", elems_name, "));"]
+                     ]
 
     addDecl decl
-    return "req"
+    return "resp"
   where
     resp_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
-    elems_name = "req_elems"
+    elems_name = "resp_elems"
 
 newEncodeArraySeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
 newEncodeArraySeg names identifier kvs = do
@@ -504,7 +504,7 @@ encodeFunctionEpilogue varNames =
 genEncodeFunction :: Text -> [(Text, Type)] -> DeclM ()
 genEncodeFunction identifier kvs = do
     addDecl $ encodeFunctionHeader identifier
-    varNames <- forM (reverse kvs) genEncodeVariables
+    varNames <- forM kvs genEncodeVariables
     addDecl $ encodeFunctionEpilogue varNames
   where
     getIdentifier sup sub = if sup == sub
@@ -566,7 +566,7 @@ decodeFunctionEpilogue varNames =
 genDecodeFunction :: Text -> [(Text, Type)] -> DeclM ()
 genDecodeFunction identifier kvs = do
     addDecl $ decodeFunctionHeader identifier
-    varNames <- forM kvs genDecodeVariables
+    varNames <- forM (reverse kvs) genDecodeVariables
     addDecl $ decodeFunctionEpilogue varNames
   where
     getIdentifier sup sub = if sup == sub
@@ -609,7 +609,7 @@ freeReqFunctionEpilogue identifier = "}"
 genFreeReqFunction :: Text -> [(Text, Type)] -> DeclM ()
 genFreeReqFunction identifier kvs = do
     addDecl $ freeReqFunctionHeader identifier
-    forM_ (reverse kvs) genFreeVariables
+    forM_ kvs genFreeVariables
     addDecl $ freeReqFunctionEpilogue identifier
   where
     getIdentifier sup sub = if sup == sub
@@ -629,10 +629,16 @@ genFreeReqFunction identifier kvs = do
           newFreeReqSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
 -- * format object and structure
-splitWithNames :: [Text] -> [(Text, Type)] -> [[(Text, Type)]]
-splitWithNames names kvs = tail . reverse . uncurry (flip (:))
-                         $ foldl' (\(rss, kvs') name -> first (:rss) (break ((== name) . fst) kvs'))
-                                  ([], kvs) names
+zipNamesKvs :: [Text] -> [(Text, Type)] -> [(Text, [(Text, Type)])]
+zipNamesKvs names = reverse . go ([], names)
+  where
+    go zs@(znkvs, ns) [] = znkvs
+    go zs@(znkvs, ns) kvs@(kv:kvs')
+      | null ns          = go (updateZnkvsHead znkvs kv, ns) kvs'
+      | fst kv `elem` ns = go ((fst kv, [kv]) : znkvs, filter (/= fst kv) ns) kvs'
+      | otherwise = go (updateZnkvsHead znkvs kv, ns) kvs'
+    updateZnkvsHead [] kv = []
+    updateZnkvsHead (znkv:znkvs) kv = second (kv :) znkv : znkvs
 
 getObjectDict :: Type -> Dict
 getObjectDict (TObj o) = fromJust $ Just o
@@ -650,7 +656,7 @@ displaySplitTypes dict = trace ("displaySplitTypes: " ++ show (toposort dict)) $
           addDecl ""
         else
           genEncodeFunction (normalizeTypeName name) kvs
-    nameKvsPairs = zip topFieldNames . splitWithNames topFieldNames $ tail sortedDict
+    nameKvsPairs = zipNamesKvs topFieldNames sortedDict
     topFieldNames = map fst . toposort . unDict . getObjectDict . snd $ head sortedDict
     sortedDict = toposort dict
 
@@ -669,7 +675,7 @@ declSplitTypes dict = trace ("declSplitTypes: " ++ show nameKvsPairs) $ runDecl 
   where
     declarations =
       forM (reverse nameKvsPairs) $ \(topField, kvs) -> do
-        forM_ (reverse kvs) $ \(name, typ) ->
+        forM_ kvs $ \(name, typ) ->
           formatObjectStruct topField (normalizeTypeName name) typ
         if Text.isSuffixOf "_req" topField then do
           declDecodeFunction topField
@@ -677,7 +683,7 @@ declSplitTypes dict = trace ("declSplitTypes: " ++ show nameKvsPairs) $ runDecl 
         else
           declEncodeFunction topField
         addDecl ""
-    nameKvsPairs = zip topFieldNames . splitWithNames topFieldNames $ tail sortedDict
+    nameKvsPairs = zipNamesKvs topFieldNames sortedDict
     topFieldNames = map fst . toposort . unDict . getObjectDict . snd $ head sortedDict
     sortedDict = toposort dict
 

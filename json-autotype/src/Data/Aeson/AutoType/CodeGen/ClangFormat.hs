@@ -82,13 +82,9 @@ sanitySubEltName = stripReqResp . stripElts
 mergeSubTypeName :: Text -> Text -> Text
 mergeSubTypeName sup sub = Text.concat [sup, "_", sanitySubEltName sub]
 
--- | Wrap a type alias.
-wrapAlias :: Text -> Text -> Text
-wrapAlias identifier contents = Text.unwords ["type", identifier, "=", contents]
-
 -- | Wrap a C struct alias.
 wrapStructAlias :: Text -> Text -> Text
-wrapStructAlias identifier contents = Text.unwords ["typedef", contents, identifier, ";"]
+wrapStructAlias identifier contents = Text.concat ["typedef ", contents, " neu_parse_", identifier, "_t;"]
 
 -- | Wrap a data type declaration
 wrapStruct ::  Text -> Text -> Text
@@ -372,7 +368,7 @@ newStructDecl identifier kvs = do attrs <- forM kvs $ \(k, v) -> do
 -- | Add new type alias for Array type
 newStructAlias :: Text -> Type -> DeclM Text
 newStructAlias identifier content = do formatted <- formatStruct content
-                                       addDecl $ Text.unlines [wrapAlias identifier formatted]
+                                       addDecl $ Text.unlines [wrapStructAlias identifier formatted]
                                        return identifier
 
 addDecl decl = decls %%= (\ds -> ((), decl:ds))
@@ -661,13 +657,15 @@ displaySplitTypes dict = trace ("displaySplitTypes: " ++ show (toposort dict)) $
     sortedDict = toposort dict
 
 formatObjectStruct ::  Text -> Text -> Type -> DeclM Text
-formatObjectStruct topField identifier (TObj o) = newStructDecl  newIdentifier d
+formatObjectStruct topField identifier (TObj o) = newStructDecl identifier' d
   where
     d = Map.toList $ unDict o
-    newIdentifier = if topField == identifier
-                    then identifier
-                    else mergeSubTypeName topField identifier
-formatObjectStruct _ identifier  other   = newStructAlias identifier other
+    identifier' = if topField == identifier
+                  then identifier
+                  else mergeSubTypeName topField identifier
+formatObjectStruct topField identifier  other   = newStructAlias identifier' other
+  where
+    identifier' = mergeSubTypeName topField identifier
 
 -- | Declare an structure of types split by name.
 declSplitTypes ::  Map Text Type -> Text

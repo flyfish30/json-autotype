@@ -16,7 +16,7 @@ import           Control.Arrow             ((&&&), first, second)
 import           Control.Applicative       ((<$>), (<*>))
 import           Control.Lens.TH
 import           Control.Lens
-import           Control.Monad             (forM, forM_)
+import           Control.Monad             (forM, forM_, unless)
 import           Control.Exception(assert)
 import qualified Data.HashMap.Strict        as Map
 import           Data.Monoid
@@ -141,11 +141,13 @@ genEndecElems indent endec identifier valName contents =
             "},"
           , "{"
           ]
-    escapeText = Text.pack . show . Text.unpack
+    escapeText fieldName | Text.null fieldName = "NULL"
+                         | otherwise = Text.concat ["\"", fieldName, "\""]
     getArrayName fieldName = Text.append (tryStripSuffix "s" fieldName) "_array"
     valAssign typeText jsonId
       | typeText == "value"  = Text.concat [".v",       "      = ", getArrayName jsonId, ","]
       | typeText == "object" = Text.concat [".v.val_", typeText, " = ", getArrayName jsonId, ","]
+      | Text.null jsonId     = Text.concat [".v.val_", typeText, " = *", valName, ","]
       | otherwise            = Text.concat [".v.val_", typeText, " = ", valName, "->" , jsonId, ","]
 
 genDecodeAssign :: Int -> Text -> Text -> [MappedKey] -> [Text]
@@ -154,6 +156,10 @@ genDecodeAssign indent varName elemsName contents =
   where
     assignValue i key@(jsonId, clangId, typeText, _nullable)
       | typeText == "value" = assignUnionValue i key
+      | Text.null jsonId    = [
+            Text.concat [ "*", varName, " = ", elemsName, "["
+                        , Text.pack $ show i, "].v.val_", typeText, ";"]
+          ]
       | otherwise           = [
             Text.concat [ varName, "->", jsonId, " = ", elemsName, "["
                         , Text.pack $ show i, "].v.val_", typeText, ";"]
@@ -185,7 +191,7 @@ newEncodeSeg identifier kvs = do
     let decl = Text.unlines $
                   genEndecElems shiftWidth Encode elems_name "" attrs  -- generate neu_json_elem_t elems[]
                   ++ [ Text.concat [ "    ret = neu_json_encode_field(json_object, "
-                                   , elems_name, "NEU_JSON_ELEM_SIZE(", elems_name, "));"]
+                                   , elems_name, ", NEU_JSON_ELEM_SIZE(", elems_name, "));"]
                      ]
 
     addDecl decl
@@ -313,16 +319,18 @@ newFreeReqArraySeg names identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = unlinesWithIndent shiftWidth $ [
-                    Text.concat [req_type_decl, " *", pVarName, " = ", varName, ";"]
-                  , Text.concat ["for (int i = 0; i < ", countName, "; i++) {"]
-                  ] ++
-                  innerFree attrs
-                  ++ [
-                    Text.concat ["    ", pVarName, "++;"]
-                  , "}"
-                 ]
-    addDecl decl
+    let decl = if any hasAllocValue attrs then
+                 unlinesWithIndent shiftWidth $ [
+                     Text.concat [req_type_decl, " *", pVarName, " = ", varName, ";"]
+                   , Text.concat ["for (int i = 0; i < ", countName, "; i++) {"]
+                   ] ++
+                   innerFree attrs
+                   ++ [
+                     Text.concat ["    ", pVarName, "++;"]
+                   , "}"
+                   ]
+               else ""
+    unless (Text.null decl) $ addDecl decl
   where
     req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
     varName = Text.intercalate "->" (init names ++ [Text.concat [last names, "s"]])
@@ -515,7 +523,7 @@ genEncodeFunction identifier kvs = do
     genEncodeVariables (name, typ)
       | Text.isSuffixOf "sElt" name =
           newEncodeArraySeg ["resp", tryStripSuffix "sElt" name]
-                            (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+                            (getIdentifier identifier name) [("", typ)]
       | otherwise =
           newEncodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
@@ -577,7 +585,7 @@ genDecodeFunction identifier kvs = do
     genDecodeVariables (name, typ)
       | Text.isSuffixOf "sElt" name =
           newDecodeArraySeg ["req", tryStripSuffix "sElt" name]
-                            (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+                            (getIdentifier identifier name) [("", typ)]
       | otherwise =
           newDecodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
@@ -620,7 +628,7 @@ genFreeReqFunction identifier kvs = do
     genFreeVariables (name, typ)
       | Text.isSuffixOf "sElt" name =
           newFreeReqArraySeg ["req", tryStripSuffix "sElt" name]
-                            (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+                            (getIdentifier identifier name) [("", typ)]
       | otherwise =
           newFreeReqSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 

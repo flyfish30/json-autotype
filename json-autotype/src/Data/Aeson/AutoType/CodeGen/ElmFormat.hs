@@ -7,8 +7,10 @@
 {-# LANGuaGE FlexibleContexts    #-}
 -- | Formatting type declarations and class instances for inferred types.
 module Data.Aeson.AutoType.CodeGen.ElmFormat(
-  displaySplitTypes,
-  normalizeTypeName) where
+    displaySplitTypes
+  , normalizeTypeName
+  , splitTypeByLabelElm
+  ) where
 
 import           Control.Arrow             ((&&&))
 import           Control.Applicative       ((<$>), (<*>))
@@ -48,8 +50,6 @@ data DeclState = DeclState { _decls   :: [Text]
 makeLenses ''DeclState
 
 type DeclM = State DeclState
-
-type Map k v = Map.HashMap k v
 
 stepM :: DeclM Int
 stepM = counter %%= (\i -> (i, i+1))
@@ -260,6 +260,10 @@ type TypeTreeM a = State TypeTree a
 
 addType :: Text -> Type -> TypeTreeM ()
 addType label typ = modify $ Map.insertWith (++) label [typ]
+
+-- | Splits initial type with a given label, into a mapping of object type names and object type structures.
+splitTypeByLabelElm :: Text -> Type -> Map Text Type
+splitTypeByLabelElm = splitTypeByLabelDefault
 
 formatObjectType ::  Text -> Type -> DeclM Text
 formatObjectType identifier (TObj o) = newDecl  identifier d

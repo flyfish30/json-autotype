@@ -152,7 +152,7 @@ generateHaskellFromJSONs opts@Options { tyOpts=TyOptions { toplevel
                         then typeChecking finalType filenames valueForEachFile
                         else return                 filenames
   -- We split different dictionary labels to become different type trees (and thus different declarations.)
-  let splitted = splitTypeByLabel toplevelName finalType
+  let splitted = splitTypeByLabel lang toplevelName finalType
   myTrace $ "SPLITTED: " ++ pretty splitted
   assert (not $ any hasNonTopTObj $ Map.elems splitted) $ do
     -- We compute which type labels are candidates for unification

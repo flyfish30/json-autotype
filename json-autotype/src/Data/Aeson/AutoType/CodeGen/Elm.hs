@@ -5,6 +5,7 @@ module Data.Aeson.AutoType.CodeGen.Elm(
     defaultElmFilename
   , writeElmModule
   , runElmModule
+  , splitTypeByLabelElm
   ) where
 
 import qualified Data.Text           as Text

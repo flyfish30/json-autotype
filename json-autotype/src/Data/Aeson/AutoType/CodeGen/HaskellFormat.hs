@@ -7,7 +7,9 @@
 {-# LANGuaGE FlexibleContexts    #-}
 -- | Formatting type declarations and class instances for inferred types.
 module Data.Aeson.AutoType.CodeGen.HaskellFormat(
-  displaySplitTypes, normalizeTypeName
+    displaySplitTypes
+  , normalizeTypeName
+  , splitTypeByLabelHaskell
 ) where
 
 import           Control.Arrow             ((&&&))
@@ -32,7 +34,7 @@ import           GHC.Generics              (Generic)
 import           Data.Aeson.AutoType.Type
 import           Data.Aeson.AutoType.Extract
 import           Data.Aeson.AutoType.Format
-import           Data.Aeson.AutoType.Split (toposort)
+import           Data.Aeson.AutoType.Split (toposort, Map)
 import           Data.Aeson.AutoType.Util  ()
 
 --import           Debug.Trace -- DEBUG
@@ -49,8 +51,6 @@ data DeclState = DeclState { _decls   :: [Text]
 makeLenses ''DeclState
 
 type DeclM = State DeclState
-
-type Map k v = Map.HashMap k v
 
 stepM :: DeclM Int
 stepM = counter %%= (\i -> (i, i+1))
@@ -228,8 +228,8 @@ splitTypeByLabel' l (TObj   o) = do kvs <- forM (Map.toList $ unDict o) $ \(k, v
                                     return $! TLabel l
 
 -- | Splits initial type with a given label, into a mapping of object type names and object type structures.
-splitTypeByLabel :: Text -> Type -> Map Text Type
-splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
+splitTypeByLabelHaskell :: Text -> Type -> Map Text Type
+splitTypeByLabelHaskell topLabel t = Map.map (foldl1' unifyTypes) finalState
   where
     finalize (TLabel l) = assert (l == topLabel) $ return ()
     finalize  topLevel  = addType topLabel topLevel

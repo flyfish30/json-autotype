@@ -10,6 +10,7 @@ module Data.Aeson.AutoType.CodeGen.ClangFormat(
     displaySplitTypes
   , declSplitTypes
   , normalizeTypeName
+  , splitTypeByLabelClang
 ) where
 
 import           Control.Arrow             ((&&&), first, second)
@@ -28,7 +29,7 @@ import           Data.Set                  (Set )
 import           Data.List                 (foldl1', foldl', intercalate)
 import           Data.Char                 (isAlpha, isDigit)
 import           Control.Monad.State.Class
-import           Control.Monad.State.Strict(State, runState)
+import           Control.Monad.State.Strict(State, runState, get)
 import qualified Data.Graph          as Graph
 import           GHC.Generics              (Generic)
 
@@ -38,8 +39,8 @@ import           Data.Aeson.AutoType.Format
 import           Data.Aeson.AutoType.Split (toposort)
 import           Data.Aeson.AutoType.Util  ()
 
-import           Debug.Trace -- DEBUG
--- trace _ x = x
+--import           Debug.Trace -- DEBUG
+trace _ x = x
 
 -- | prefix of struct name, function name, variable name for json encode/decode
 prefixName = "neu_json_"
@@ -76,11 +77,18 @@ tryStripSuffix suf str
   | Text.isSuffixOf suf str = fromJust $ Text.stripSuffix suf str
   | otherwise = str
 
+-- Try strip suffix "s[0-9]*Elt"
+tryStripArraySuffix :: Text -> Text
+tryStripArraySuffix name
+  | Text.isSuffixOf "Elt" name = Text.dropEnd 1 . Text.dropWhileEnd isDigit
+                               . fromJust $ Text.stripSuffix "Elt" name
+  | otherwise = name
+
 sanitySubEltName :: Text -> Text
 sanitySubEltName = stripReqResp . stripElts
   where
     stripReqResp = tryStripPrefix "req_" . tryStripPrefix "resp_"
-    stripElts    = tryStripSuffix "sElt"
+    stripElts    = tryStripArraySuffix
 
 mergeSubTypeName :: Text -> Text -> Text
 mergeSubTypeName sup sub = Text.concat [sup, "_", sanitySubEltName sub]
@@ -357,7 +365,7 @@ newStructDecl identifier kvs = do attrs <- forM kvs $ \(k, v) -> do
     fieldDecls attrList = Text.intercalate "\n" $ map fieldDecl attrList
     fieldDecl :: (Text, Text, Text, Bool) -> Text
     fieldDecl (_jsonName, haskellName, fType, _nullable)
-      | Text.isSuffixOf "sElt*" fType =
+      | Text.isSuffixOf "Elt*" fType =
           Text.intercalate "\n" [
               Text.concat ["    int  ", arrayLenName haskellName, ";"]
             , Text.concat ["    ", arrayTypeName fType, "  ", escapeKeywords haskellName, ";"]
@@ -453,17 +461,25 @@ type TypeTreeM a = State TypeTree a
 addType :: Text -> Type -> TypeTreeM ()
 addType label typ = modify $ Map.insertWith (++) label [typ]
 
+splitPrimaryTypeByLabel :: Text -> Type -> TypeTreeM Type
+splitPrimaryTypeByLabel l typ = if Text.isSuffixOf "Elt" l then do
+                                     addType l typ
+                                     return $! TLabel l
+                                else return typ
+
 splitTypeByLabel' :: Text -> Type -> TypeTreeM Type
-splitTypeByLabel' _  TString   = return TString
-splitTypeByLabel' _  TInt      = return TInt
-splitTypeByLabel' _  TDouble   = return TDouble
-splitTypeByLabel' _  TBool     = return TBool
-splitTypeByLabel' _  TNull     = return TNull
+splitTypeByLabel' l  TString   = splitPrimaryTypeByLabel l TString
+splitTypeByLabel' l  TInt      = splitPrimaryTypeByLabel l TInt
+splitTypeByLabel' l  TDouble   = splitPrimaryTypeByLabel l TDouble
+splitTypeByLabel' l  TBool     = splitPrimaryTypeByLabel l TBool
+splitTypeByLabel' l  TNull     = splitPrimaryTypeByLabel l TNull
 splitTypeByLabel' _ (TLabel r) = assert False $ return $ TLabel r -- unnecessary?
 splitTypeByLabel' l (TUnion u) = do m <- mapM (splitTypeByLabel' l) $ Set.toList u
                                     return $! TUnion $! Set.fromList m
-splitTypeByLabel' l (TArray a) = do m <- splitTypeByLabel' (l `Text.append` "_elt") a
-                                    return $! TArray m
+splitTypeByLabel' l (TArray a) = do m <- Control.Monad.State.Strict.get
+                                    let size = Map.size m
+                                    t <- splitTypeByLabel' (Text.concat [l, Text.pack (show size), "Elt"]) a
+                                    return $! TArray t
 splitTypeByLabel' l (TObj   o) = do kvs <- forM (Map.toList $ unDict o) $ \(k, v) -> do
                                        component <- splitTypeByLabel' k v
                                        return (k, component)
@@ -471,8 +487,8 @@ splitTypeByLabel' l (TObj   o) = do kvs <- forM (Map.toList $ unDict o) $ \(k, v
                                     return $! TLabel l
 
 -- | Splits initial type with a given label, into a mapping of object type names and object type structures.
-splitTypeByLabel :: Text -> Type -> Map Text Type
-splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
+splitTypeByLabelClang :: Text -> Type -> Map Text Type
+splitTypeByLabelClang topLabel t = Map.map (foldl1' unifyTypes) finalState
   where
     finalize (TLabel l) = assert (l == topLabel) $ return ()
     finalize  topLevel  = addType topLabel topLevel
@@ -518,14 +534,14 @@ genEncodeFunction identifier kvs = do
                             then sub
                             else mergeSubTypeName sup sub
     genEncodeVariables (name, TObj o)
-      | Text.isSuffixOf "sElt" name =
-          newEncodeArraySeg ["resp", tryStripSuffix "sElt" name]
+      | Text.isSuffixOf "Elt" name =
+          newEncodeArraySeg ["resp", tryStripArraySuffix name]
                             (getIdentifier identifier name) (toposort $ unDict o)
       | otherwise =
           newEncodeSeg (getIdentifier identifier name) (toposort $ unDict o)
     genEncodeVariables (name, typ)
-      | Text.isSuffixOf "sElt" name =
-          newEncodeArraySeg ["resp", tryStripSuffix "sElt" name]
+      | Text.isSuffixOf "Elt" name =
+          newEncodeArraySeg ["resp", tryStripArraySuffix name]
                             (getIdentifier identifier name) [("", typ)]
       | otherwise =
           newEncodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
@@ -580,14 +596,14 @@ genDecodeFunction identifier kvs = do
                             then sub
                             else mergeSubTypeName sup sub
     genDecodeVariables (name, TObj o)
-      | Text.isSuffixOf "sElt" name =
-          newDecodeArraySeg ["req", tryStripSuffix "sElt" name]
+      | Text.isSuffixOf "Elt" name =
+          newDecodeArraySeg ["req", tryStripArraySuffix name]
                             (getIdentifier identifier name) (toposort $ unDict o)
       | otherwise =
           newDecodeSeg (getIdentifier identifier name) (toposort $ unDict o)
     genDecodeVariables (name, typ)
-      | Text.isSuffixOf "sElt" name =
-          newDecodeArraySeg ["req", tryStripSuffix "sElt" name]
+      | Text.isSuffixOf "Elt" name =
+          newDecodeArraySeg ["req", tryStripArraySuffix name]
                             (getIdentifier identifier name) [("", typ)]
       | otherwise =
           newDecodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
@@ -623,14 +639,14 @@ genFreeReqFunction identifier kvs = do
                             then sub
                             else mergeSubTypeName sup sub
     genFreeVariables (name, TObj o)
-      | Text.isSuffixOf "sElt" name =
-          newFreeReqArraySeg ["req", tryStripSuffix "sElt" name]
+      | Text.isSuffixOf "Elt" name =
+          newFreeReqArraySeg ["req", tryStripArraySuffix name]
                             (getIdentifier identifier name) (toposort $ unDict o)
       | otherwise =
           newFreeReqSeg (getIdentifier identifier name) (toposort $ unDict o)
     genFreeVariables (name, typ)
-      | Text.isSuffixOf "sElt" name =
-          newFreeReqArraySeg ["req", tryStripSuffix "sElt" name]
+      | Text.isSuffixOf "Elt" name =
+          newFreeReqArraySeg ["req", tryStripArraySuffix name]
                             (getIdentifier identifier name) [("", typ)]
       | otherwise =
           newFreeReqSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]

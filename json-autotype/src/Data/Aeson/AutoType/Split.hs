@@ -7,7 +7,8 @@
 {-# LANGuaGE FlexibleContexts    #-}
 -- | Formatting type declarations and class instances for inferred types. 
 module Data.Aeson.AutoType.Split(
-  splitTypeByLabel, unificationCandidates,
+  Map,
+  splitTypeByLabelDefault, unificationCandidates,
   unifyCandidates, toposort
 ) where
 
@@ -56,18 +57,12 @@ type TypeTreeM a = State TypeTree a
 addType :: Text -> Type -> TypeTreeM ()
 addType label typ = modify $ Map.insertWith (++) label [typ]
 
-splitPrimaryTypeByLabel :: Text -> Type -> TypeTreeM Type
-splitPrimaryTypeByLabel l typ = if Text.isSuffixOf "Elt" l then do
-                                     addType l typ
-                                     return $! TLabel l
-                                 else return typ
-
 splitTypeByLabel' :: Text -> Type -> TypeTreeM Type
-splitTypeByLabel' l  TString   = splitPrimaryTypeByLabel l TString
-splitTypeByLabel' l  TInt      = splitPrimaryTypeByLabel l TInt
-splitTypeByLabel' l  TDouble   = splitPrimaryTypeByLabel l TDouble
-splitTypeByLabel' l  TBool     = splitPrimaryTypeByLabel l TBool
-splitTypeByLabel' l  TNull     = splitPrimaryTypeByLabel l TNull
+splitTypeByLabel' _  TString   = return TString
+splitTypeByLabel' _  TInt      = return TInt
+splitTypeByLabel' _  TDouble   = return TDouble
+splitTypeByLabel' _  TBool     = return TBool
+splitTypeByLabel' _  TNull     = return TNull
 splitTypeByLabel' _ (TLabel r) = assert False $ return $ TLabel r -- unnecessary?
 splitTypeByLabel' l (TUnion u) = do m <- mapM (splitTypeByLabel' l) $ Set.toList u
                                     return $! TUnion $! Set.fromList m
@@ -80,8 +75,8 @@ splitTypeByLabel' l (TObj   o) = do kvs <- forM (Map.toList $ unDict o) $ \(k, v
                                     return $! TLabel l
 
 -- | Splits initial type with a given label, into a mapping of object type names and object type structures.
-splitTypeByLabel :: Text -> Type -> Map Text Type
-splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
+splitTypeByLabelDefault :: Text -> Type -> Map Text Type
+splitTypeByLabelDefault topLabel t = Map.map (foldl1' unifyTypes) finalState
   where
     finalize (TLabel l) = assert (l == topLabel) $ return ()
     finalize  topLevel  = addType topLabel topLevel

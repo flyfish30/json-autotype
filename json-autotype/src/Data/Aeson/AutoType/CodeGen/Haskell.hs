@@ -8,6 +8,7 @@ module Data.Aeson.AutoType.CodeGen.Haskell(
   , runHaskellModule
   , runHaskellModuleStrict
   , defaultHaskellFilename
+  , splitTypeByLabelHaskell
   ) where
 
 import qualified Data.Text           as Text

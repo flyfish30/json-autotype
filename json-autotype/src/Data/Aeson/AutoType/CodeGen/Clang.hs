@@ -7,6 +7,7 @@ module Data.Aeson.AutoType.CodeGen.Clang(
     writeClangModule
   , runClangModule
   , defaultClangFilename
+  , splitTypeByLabelClang
   ) where
 
 import qualified Data.Text           as Text

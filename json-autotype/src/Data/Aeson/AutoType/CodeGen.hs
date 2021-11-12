@@ -3,6 +3,7 @@
 -- | Code generation and test running in different languages. (Switchbox.)
 module Data.Aeson.AutoType.CodeGen(
     Lang(..)
+  , splitTypeByLabel
   , writeModule
   , runModule
   , defaultOutputFilename
@@ -13,6 +14,7 @@ import qualified Data.HashMap.Strict as Map
 import           Data.Aeson.AutoType.Type
 import           System.Exit
 
+import           Data.Aeson.AutoType.Split
 import           Data.Aeson.AutoType.CodeGen.Haskell
 import           Data.Aeson.AutoType.CodeGen.Elm
 import           Data.Aeson.AutoType.CodeGen.Clang
@@ -23,6 +25,13 @@ data Lang = Haskell
           | Elm
           | Clang
           deriving(Eq)
+
+-- | Splits initial type with a given label, into a mapping of object type names and object type structures.
+splitTypeByLabel :: Lang -> Text -> Type -> Map Text Type
+splitTypeByLabel Haskell       = splitTypeByLabelHaskell
+splitTypeByLabel HaskellStrict = splitTypeByLabelHaskell
+splitTypeByLabel Elm           = splitTypeByLabelElm
+splitTypeByLabel Clang         = splitTypeByLabelClang
 
 -- | Default output filname is used, when there is no explicit output file path, or it is "-" (stdout).
 -- Default module name is consistent with it.

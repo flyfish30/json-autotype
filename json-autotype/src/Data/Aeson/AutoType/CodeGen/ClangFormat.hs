@@ -41,6 +41,9 @@ import           Data.Aeson.AutoType.Util  ()
 import           Debug.Trace -- DEBUG
 -- trace _ x = x
 
+-- | prefix of struct name, function name, variable name for json encode/decode
+prefixName = "neu_json_"
+
 shiftWidth = 4
 
 fst3 ::  (t, t1, t2) -> t
@@ -84,14 +87,14 @@ mergeSubTypeName sup sub = Text.concat [sup, "_", sanitySubEltName sub]
 
 -- | Wrap a C struct alias.
 wrapStructAlias :: Text -> Text -> Text
-wrapStructAlias identifier contents = Text.concat ["typedef ", contents, " neu_parse_", identifier, "_t;"]
+wrapStructAlias identifier contents = Text.concat ["typedef ", contents, " ", prefixName, identifier, "_t;"]
 
 -- | Wrap a data type declaration
 wrapStruct ::  Text -> Text -> Text
 wrapStruct identifier contents = Text.unlines [header, contents, tailer]
   where
     header = "typedef struct {"
-    tailer = Text.concat ["} neu_parse_", identifier, "_t;"]
+    tailer = Text.concat ["} ", prefixName, identifier, "_t;"]
 
 -- | Explanatory type alias for making declarations
 -- First element of the triple is original JSON identifier,
@@ -197,7 +200,7 @@ newEncodeSeg identifier kvs = do
     addDecl decl
     return "resp"
   where
-    resp_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    resp_type_decl = Text.concat [prefixName, identifier, "_t"]
     elems_name = "resp_elems"
 
 newEncodeArraySeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
@@ -221,7 +224,7 @@ newEncodeArraySeg names identifier kvs = do
     addDecl decl
     return arrayName
   where
-    resp_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    resp_type_decl = Text.concat [prefixName, identifier, "_t"]
     arrayName = Text.concat [last names, "_array"]
     varName = Text.intercalate "->" (init names ++ [Text.concat [last names, "s"]])
     countName = Text.intercalate "->" (init names ++ [Text.concat ["n_", last names]])
@@ -256,7 +259,7 @@ newDecodeSeg identifier kvs = do
     addDecl decl
     return "req"
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
     elems_name = "req_elems"
 
 newDecodeArraySeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
@@ -288,7 +291,7 @@ newDecodeArraySeg names identifier kvs = do
     addDecl decl
     return varName
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
     varName = Text.intercalate "->" (init names ++ [Text.concat [last names, "s"]])
     countName = Text.intercalate "->" (init names ++ [Text.concat ["n_", last names]])
     pVarName = Text.concat ["p_", last names]
@@ -307,7 +310,7 @@ newFreeReqSeg identifier kvs = do
                  ]
     addDecl decl
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
     innerFree = unlinesWithIndent shiftWidth . map freeValue
               . filter hasAllocValue
     hasAllocValue (_jsonId, _clangId, typeText, _nullable) = jtypeHasAllocBuf typeText
@@ -332,7 +335,7 @@ newFreeReqArraySeg names identifier kvs = do
                else ""
     unless (Text.null decl) $ addDecl decl
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
     varName = Text.intercalate "->" (init names ++ [Text.concat [last names, "s"]])
     countName = Text.intercalate "->" (init names ++ [Text.concat ["n_", last names]])
     pVarName = Text.concat ["p_", last names]
@@ -368,7 +371,7 @@ newStructDecl identifier kvs = do attrs <- forM kvs $ \(k, v) -> do
               Text.concat ["    ", fType, "  ", escapeKeywords haskellName, ";"]
     arrayLenName name = Text.append "n_"
                       . escapeKeywords $ tryStripSuffix "s" name
-    arrayTypeName name = Text.append "neu_parse_"
+    arrayTypeName name = Text.append prefixName
                        . flip Text.append "_t*"
                        . mergeSubTypeName identifier
                        . escapeKeywords $ Text.dropEnd 1 name
@@ -479,20 +482,20 @@ splitTypeByLabel topLabel t = Map.map (foldl1' unifyTypes) finalState
 -- * Generate function for encode json value
 declEncodeFunction :: Text -> DeclM ()
 declEncodeFunction identifier = addDecl $
-    Text.concat ["int neu_parse_encode_", identifier,
+    Text.concat ["int ", prefixName, "encode_", identifier,
                  "(void *json_object, void *param);"]
 
 encodeFunctionHeader :: Text -> Text
 encodeFunctionHeader identifier =
     Text.unlines [
-        Text.concat ["int neu_parse_encode_", identifier,
+        Text.concat ["int ", prefixName, "encode_", identifier,
                      "(void *json_object, void *param)"]
       , "{"
       , "    int ret = 0;"
       , Text.concat ["    ", resp_type_decl, " *resp = (", resp_type_decl, "*) param;"]
       ]
   where
-    resp_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    resp_type_decl = Text.concat [prefixName, identifier, "_t"]
 
 encodeFunctionEpilogue :: [Text] -> Text
 encodeFunctionEpilogue varNames =
@@ -530,21 +533,21 @@ genEncodeFunction identifier kvs = do
 -- * Generate function for decode json value
 declDecodeFunction :: Text -> DeclM ()
 declDecodeFunction identifier = addDecl $
-    Text.concat ["int neu_parse_decode_", identifier,
+    Text.concat ["int ", prefixName, "decode_", identifier,
                  "(char *buf, ", req_type_decl, " **result);"]
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
 
 decodeFunctionHeader :: Text -> Text
 decodeFunctionHeader identifier =
     Text.unlines [
-        Text.concat [ "int neu_parse_decode_", identifier
+        Text.concat [ "int ", prefixName, "decode_", identifier
                     , "(char *buf, ", req_type_decl, " **result)"]
       , "{"
       , "    int ret = 0;"
       ]
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
 
 decodeFunctionEpilogue :: [Text] -> Text
 decodeFunctionEpilogue varNames =
@@ -592,20 +595,20 @@ genDecodeFunction identifier kvs = do
 -- * Generate function for free request structure
 declFreeReqFunction :: Text -> DeclM ()
 declFreeReqFunction identifier = addDecl $
-    Text.concat ["void neu_parse_decode_", identifier, "_free",
+    Text.concat ["void ", prefixName, "decode_", identifier, "_free",
                  "(", req_type_decl, " *req);"]
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
 
 freeReqFunctionHeader :: Text -> Text
 freeReqFunctionHeader identifier =
     Text.unlines [
-          Text.concat ["void neu_parse_decode_", identifier, "_free",
+          Text.concat ["void ", prefixName, "decode_", identifier, "_free",
                        "(", req_type_decl, " *req)"]
         , "{"
         ]
   where
-    req_type_decl = Text.concat ["neu_parse_", identifier, "_t"]
+    req_type_decl = Text.concat [prefixName, identifier, "_t"]
 
 freeReqFunctionEpilogue :: Text -> Text
 freeReqFunctionEpilogue identifier = "}"

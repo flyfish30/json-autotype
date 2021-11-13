@@ -77,10 +77,15 @@ tryStripSuffix suf str
   | Text.isSuffixOf suf str = fromJust $ Text.stripSuffix suf str
   | otherwise = str
 
+tryDropEndChar :: Char -> Text -> Text
+tryDropEndChar c str
+  | Text.last str == c = Text.dropEnd 1 str
+  | otherwise = str
+
 -- Try strip suffix "s[0-9]*Elt"
 tryStripArraySuffix :: Text -> Text
 tryStripArraySuffix name
-  | Text.isSuffixOf "Elt" name = Text.dropEnd 1 . Text.dropWhileEnd isDigit
+  | Text.isSuffixOf "Elt" name = tryDropEndChar 's' . Text.dropWhileEnd isDigit
                                . fromJust $ Text.stripSuffix "Elt" name
   | otherwise = name
 

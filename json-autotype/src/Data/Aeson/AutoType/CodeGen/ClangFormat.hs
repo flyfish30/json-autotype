@@ -116,6 +116,7 @@ wrapStruct identifier contents = Text.unlines [header, contents, tailer]
 type MappedKey = (Text, Text, Text, Bool)
 
 jtypeHasAllocBuf "object" = True
+jtypeHasAllocBuf "value" = True
 jtypeHasAllocBuf "str" = True
 jtypeHasAllocBuf _ = False
 
@@ -149,9 +150,12 @@ genEndecElems indent endec identifier valName contents =
     putValue (jsonId, clangId, typeText, _nullable) =
         shiftWithIndent (indent + shiftWidth) $ [
             Text.concat [".name = ", escapeText jsonId, ","]
-          , Text.concat [".t = NEU_JSON_", Text.toUpper typeText, ","]
+          , if typeText == "value" && endec == Encode then
+              Text.concat [".t = ", valName, "->t", ","]
+            else
+              Text.concat [".t = NEU_JSON_", Text.toUpper typeText, ","]
           ] ++
-          [valAssign typeText jsonId | endec == Encode]
+          [valAssign jsonId clangId typeText | endec == Encode]
     seperator =
         shiftWithIndent indent [
             "},"
@@ -160,8 +164,8 @@ genEndecElems indent endec identifier valName contents =
     escapeText fieldName | Text.null fieldName = "NULL"
                          | otherwise = Text.concat ["\"", fieldName, "\""]
     getArrayName fieldName = Text.append (tryStripSuffix "s" fieldName) "_array"
-    valAssign typeText jsonId
-      | typeText == "value"  = Text.concat [".v",       "      = ", getArrayName jsonId, ","]
+    valAssign jsonId clangId typeText
+      | typeText == "value"  = Text.concat [".v", " = ", valName, "->" , escapeKeywords clangId, ","]
       | typeText == "object" = Text.concat [".v.val_", typeText, " = ", getArrayName jsonId, ","]
       | Text.null jsonId     = Text.concat [".v.val_", typeText, " = *", valName, ","]
       | otherwise            = Text.concat [".v.val_", typeText, " = ", valName, "->" , jsonId, ","]
@@ -188,7 +192,7 @@ genDecodeAssign indent varName elemsName contents =
             "default:"
           , "    break;"
           , "}"
-          , Text.concat [varName, "->", jsonId, " = ", elemsName, "[",
+          , Text.concat [varName, "->t = ", elemsName, "[",
                          Text.pack $ show i, "].t;"]
         ]
     genAssignSingle i (jsonId, clangId, _, _nullable) typeText = [
@@ -354,11 +358,19 @@ newFreeReqArraySeg names identifier kvs = do
     varName = Text.intercalate "->" (init names ++ [Text.concat [last names, "s"]])
     countName = Text.intercalate "->" (init names ++ [Text.concat ["n_", last names]])
     pVarName = Text.concat ["p_", last names]
-    innerFree = shiftWithIndent shiftWidth . map freeValue
+    innerFree = shiftWithIndent shiftWidth . concatMap freeValue
               . filter hasAllocValue
     hasAllocValue (_jsonId, _clangId, typeText, _nullable) = jtypeHasAllocBuf typeText
-    freeValue (jsonId, _clangId, _typeText, _nullable) =
+    freeValue (jsonId, clangId, typeText, _nullable)
+      -- for primary union value, only string need to free
+      | typeText == "value" = [
+            Text.concat ["if (", pVarName, "->t == NEU_JSON_STR) {"]
+          , Text.concat ["    free(", pVarName, "->", jsonId, ".val_str);"]
+          , "}"
+          ]
+      | otherwise = [
             Text.concat ["free(", pVarName, "->", jsonId, ");"]
+          ]
 
 -- * Printing a single data type declaration
 newStructDecl :: Text -> [(Text, Type)] -> DeclM Text
@@ -371,19 +383,19 @@ newStructDecl identifier kvs = do attrs <- forM kvs $ \(k, v) -> do
   where
     fieldDecls attrList = Text.intercalate "\n" $ map fieldDecl attrList
     fieldDecl :: (Text, Text, Text, Bool) -> Text
-    fieldDecl (_jsonName, haskellName, fType, _nullable)
+    fieldDecl (_jsonName, clangId, fType, _nullable)
       | Text.isSuffixOf "Elt*" fType =
           Text.intercalate "\n" [
-              Text.concat ["    int  ", arrayLenName haskellName, ";"]
-            , Text.concat ["    ", arrayTypeName fType, "  ", escapeKeywords haskellName, ";"]
+              Text.concat ["    int  ", arrayLenName clangId, ";"]
+            , Text.concat ["    ", arrayTypeName fType, "  ", escapeKeywords clangId, ";"]
           ]
       | Text.isSuffixOf "json_value" fType =
           Text.intercalate "\n" [
               Text.concat ["    enum neu_json_type    t;"]
-            , Text.concat ["    ", fType, "  ", escapeKeywords haskellName, ";"]
+            , Text.concat ["    ", fType, "  ", escapeKeywords clangId, ";"]
           ]
       | otherwise =
-              Text.concat ["    ", fType, "  ", escapeKeywords haskellName, ";"]
+              Text.concat ["    ", fType, "  ", escapeKeywords clangId, ";"]
     arrayLenName name = Text.append "n_"
                       . escapeKeywords $ tryStripSuffix "s" name
     arrayTypeName name = Text.append prefixName

@@ -199,13 +199,13 @@ genDecodeAssign indent varName elemsName contents =
       ]
 
 -- * Printing a JSON elems encoding source code segment
-newEncodeSeg :: Text -> [(Text, Type)] -> DeclM Text
-newEncodeSeg identifier kvs = do
+newEncodeSeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
+newEncodeSeg names identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
     let decl = Text.unlines $
-                  genEndecElems shiftWidth Encode elems_name "" attrs  -- generate neu_json_elem_t elems[]
+                  genEndecElems shiftWidth Encode elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
                   ++ [ Text.concat [ "    ret = neu_json_encode_field(json_object, "
                                    , elems_name, ", NEU_JSON_ELEM_SIZE(", elems_name, "));"]
                      ]
@@ -214,6 +214,7 @@ newEncodeSeg identifier kvs = do
     return "resp"
   where
     resp_type_decl = Text.concat [prefixName, identifier, "_t"]
+    pVarName = last names
     elems_name = "resp_elems"
 
 newEncodeArraySeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
@@ -249,8 +250,8 @@ hasSubType (id -> TObj _) = True
 hasSubType (id -> TArray _) = True
 hasSubType _ = False
 
-newDecodeSeg :: Text -> [(Text, Type)] -> DeclM Text
-newDecodeSeg identifier kvs = do
+newDecodeSeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
+newDecodeSeg names identifier kvs = do
     let kvs' = filter (not . hasSubType . snd) kvs
     attrs <- forM kvs' $ \(k, v) -> do
       formatted <- formatType v
@@ -258,7 +259,7 @@ newDecodeSeg identifier kvs = do
     let decl = Text.unlines $ [
                     Text.concat ["    ", req_type_decl, " *req = calloc(1, sizeof(", req_type_decl, "));"]
                   ] ++
-                  genEndecElems shiftWidth Decode elems_name "" attrs  -- generate neu_json_elem_t elems[]
+                  genEndecElems shiftWidth Decode elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
                   ++ [
                     Text.concat [ "    ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE("
                                 , elems_name, "), ", elems_name, ");"]
@@ -273,6 +274,7 @@ newDecodeSeg identifier kvs = do
     return "req"
   where
     req_type_decl = Text.concat [prefixName, identifier, "_t"]
+    pVarName = last names
     elems_name = "req_elems"
 
 newDecodeArraySeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
@@ -543,13 +545,15 @@ genEncodeFunction identifier kvs = do
           newEncodeArraySeg ["resp", tryStripArraySuffix name]
                             (getIdentifier identifier name) (toposort $ unDict o)
       | otherwise =
-          newEncodeSeg (getIdentifier identifier name) (toposort $ unDict o)
+          newEncodeSeg ["resp"]
+                       (getIdentifier identifier name) (toposort $ unDict o)
     genEncodeVariables (name, typ)
       | Text.isSuffixOf "Elt" name =
           newEncodeArraySeg ["resp", tryStripArraySuffix name]
                             (getIdentifier identifier name) [("", typ)]
       | otherwise =
-          newEncodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+          newEncodeSeg ["resp"]
+                       (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
 -- * Generate function for decode json value
 declDecodeFunction :: Text -> DeclM ()
@@ -605,13 +609,15 @@ genDecodeFunction identifier kvs = do
           newDecodeArraySeg ["req", tryStripArraySuffix name]
                             (getIdentifier identifier name) (toposort $ unDict o)
       | otherwise =
-          newDecodeSeg (getIdentifier identifier name) (toposort $ unDict o)
+          newDecodeSeg ["req"]
+                       (getIdentifier identifier name) (toposort $ unDict o)
     genDecodeVariables (name, typ)
       | Text.isSuffixOf "Elt" name =
           newDecodeArraySeg ["req", tryStripArraySuffix name]
                             (getIdentifier identifier name) [("", typ)]
       | otherwise =
-          newDecodeSeg (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
+          newDecodeSeg ["req"]
+                       (getIdentifier identifier name) [(tryStripSuffix "Elt" name, typ)]
 
 -- * Generate function for free request structure
 declFreeReqFunction :: Text -> DeclM ()

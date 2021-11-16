@@ -100,6 +100,7 @@ hfileHeader moduleName = Text.unlines [
   , " */"
   , ""
   ,Text.concat ["#ifndef _NEU_JSON_API_", toUpper moduleName, "_H_"]
+  ,Text.concat ["#define _NEU_JSON_API_", toUpper moduleName, "_H_"]
   , ""
   , "#ifdef __cplusplus"
   , "extern \"C\" {"

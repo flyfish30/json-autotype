@@ -64,9 +64,9 @@ cfileHeader moduleName = Text.unlines [
   ,"#include <stdlib.h>"
   ,"#include <string.h>"
   ,""
-  ,"#include \"utils/json.h\""
+  ,"#include \"json/json.h\""
   ,""
-  ,Text.concat ["#include \"", moduleName, ".h\""]
+  ,Text.concat ["#include \"json/", moduleName, ".h\""]
   ,""]
 
 
@@ -101,6 +101,8 @@ hfileHeader moduleName = Text.unlines [
   , ""
   ,Text.concat ["#ifndef _NEU_JSON_API_", toUpper moduleName, "_H_"]
   ,Text.concat ["#define _NEU_JSON_API_", toUpper moduleName, "_H_"]
+  , ""
+  ,"#include \"json/json.h\""
   , ""
   , "#ifdef __cplusplus"
   , "extern \"C\" {"

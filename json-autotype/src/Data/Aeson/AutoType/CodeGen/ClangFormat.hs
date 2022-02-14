@@ -221,6 +221,9 @@ newEncodeSeg names identifier kvs = do
     pVarName = last names
     elems_name = "resp_elems"
 
+isValueAttrs = foldr (\attr accb -> accb || is_value attr) False
+  where is_value (jsonId, _, _, _) = Text.null jsonId
+
 newEncodeArraySeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
 newEncodeArraySeg names identifier kvs = do
     attrs <- forM kvs $ \(k, v) -> do
@@ -233,8 +236,12 @@ newEncodeArraySeg names identifier kvs = do
                   ] ++
                   genEndecElems shiftWidth Encode elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
                   ++ [
-                    Text.concat [ "    ", arrayName, " = neu_json_encode_array(", arrayName, ", "
-                                , elems_name, ", NEU_JSON_ELEM_SIZE(", elems_name, "));"]
+                    if isValueAttrs attrs then
+                      Text.concat [ "    ", arrayName, " = neu_json_encode_array_value(", arrayName, ", "
+                                  , elems_name, ", NEU_JSON_ELEM_SIZE(", elems_name, "));"]
+                    else
+                      Text.concat [ "    ", arrayName, " = neu_json_encode_array(", arrayName, ", "
+                                  , elems_name, ", NEU_JSON_ELEM_SIZE(", elems_name, "));"]
                   , Text.concat ["    ", pVarName, "++;"]
                   , "}"
                   ]

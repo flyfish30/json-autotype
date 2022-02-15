@@ -264,27 +264,25 @@ hasSubType _ = False
 newDecodeSeg :: [Text] -> Text -> [(Text, Type)] -> DeclM Text
 newDecodeSeg names identifier kvs = do
     let kvs' = filter (not . hasSubType . snd) kvs
-    attrs <- forM kvs' $ \(k, v) -> do
-      formatted <- formatType v
-      return (k, normalizeFieldName identifier k, formatted, isNullable v)
-    let decl = Text.unlines $ [
-                    Text.concat ["    ", req_type_decl, " *req = calloc(1, sizeof(", req_type_decl, "));"]
-                  ] ++
-                  genEndecElems shiftWidth Decode elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
-                  ++ [
-                    Text.concat [ "    ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE("
-                                , elems_name, "), ", elems_name, ");"]
-                  , "    if (ret != 0) {"
-                  , "        goto decode_fail;"
-                  , "    }"
-                  , ""
-                  ]
-                  ++ genDecodeAssign shiftWidth "req" elems_name attrs
-
-    addDecl decl
+    Control.Monad.unless (null kvs') $ do
+        attrs <- forM kvs' $ \(k, v) -> do
+          formatted <- formatType v
+          return (k, normalizeFieldName identifier k, formatted, isNullable v)
+        let decl = Text.unlines $ 
+                      genEndecElems shiftWidth Decode elems_name pVarName attrs  -- generate neu_json_elem_t elems[]
+                      ++ [
+                        Text.concat [ "    ret = neu_json_decode(buf, NEU_JSON_ELEM_SIZE("
+                                    , elems_name, "), ", elems_name, ");"]
+                      , "    if (ret != 0) {"
+                      , "        goto decode_fail;"
+                      , "    }"
+                      , ""
+                      ]
+                      ++ genDecodeAssign shiftWidth "req" elems_name attrs
+    
+        addDecl decl
     return "req"
   where
-    req_type_decl = Text.concat [prefixName, identifier, "_t"]
     pVarName = last names
     elems_name = "req_elems"
 
@@ -589,6 +587,7 @@ decodeFunctionHeader identifier =
                     , "(char *buf, ", req_type_decl, " **result)"]
       , "{"
       , "    int ret = 0;"
+      , Text.concat ["    ", req_type_decl, " *req = calloc(1, sizeof(", req_type_decl, "));"]
       ]
   where
     req_type_decl = Text.concat [prefixName, identifier, "_t"]

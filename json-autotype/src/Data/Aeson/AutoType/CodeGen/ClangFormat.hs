@@ -230,7 +230,7 @@ newEncodeArraySeg names identifier kvs = do
       formatted <- formatType v
       return (k, normalizeFieldName identifier k, formatted, isNullable v)
     let decl = unlinesWithIndent shiftWidth $ [
-                    Text.concat ["void *", arrayName, " = NULL;"]
+                    Text.concat ["void *", arrayName, " = neu_json_array();"]
                   , Text.concat [resp_type_decl, " *", pVarName, " = ", varName, ";"]
                   , Text.concat ["for (int i = 0; i < ", countName, "; i++) {"]
                   ] ++
